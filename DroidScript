@@ -1,0 +1,546 @@
+/*
+
+This is the "DroidScript" code for the PhoneApp section of the Tool Unit Counter
+
+Name:        DanE
+Created:    10-09-15
+Rev1:       Initial App, BT connectivity and can read count
+Rev2:       More Robust BT interface, Serial data sent 1 message at a time
+Rev3:       Added Mail functionality
+Rev4:       Add QR scanner
+Rev5:       Add Menu Icon and slide draw
+Rev6:       Make mail functionality robust, includes machine serial from QR and count variable
+Rev7:       Set scale change on menu icon
+Rev8:       var CountValue now a global variable
+Rev9:       Updates from working with Dave...
+
+*/
+
+//Plugins
+app.LoadPlugin( "BarcodeReader" );
+
+//Global Variables
+var test = 123456789;
+var g_qrOff = 1;
+var g_qrOutput = "Not Connected";
+var g_menuOpen = false;
+var g_countValue;
+var g_qrQuit;
+
+//Global Commands
+btOn = app.IsBluetoothEnabled();
+//bt.SetOnReceive( bt_OnReceive );
+
+//Colour variables
+var blue = "#ff4151cc";
+var green = "#ff339933";
+var red = "#ffcc4141";
+var amber = "#ffcc9b41";
+var white = "#ffffffff";
+var grey = "#ff999999";
+//----------------------------------------------------
+
+//Start of App
+function OnStart()
+{
+    //Set app orientation
+    app.SetOrientation("portrait");
+
+    //Call layout functions
+    AddMainLayout();
+    AddMenuLayout();
+
+    layHome.AddChild( lay );
+    layHome.AddChild( laySlide);
+    
+    app.AddLayout( layHome );
+    
+    //Call Testing function
+    callTest();
+    
+    //Call other layout functions
+    AddMenuIcon();
+    
+    //Call Sub routines
+    app.EnableBackKey( false );
+    CheckBT();
+    
+    //Create Bluetooth serial object.
+    bt = app.CreateBluetoothSerial( );
+    bt.SetOnConnect( bt_OnConnect )
+    bt.SetSplitMode( "End", "\n" );
+    
+}
+//----------------------------------------------------
+
+//Function used for testing new/trial code
+function callTest ()
+{
+    /*
+    btList = app.CreateBluetoothList( "" );
+    btList.SetOnTouch( btList_OnTouch );
+    
+    
+    
+    txtTEST = app.CreateText( test , 1, 0.05 );
+    txtTEST.SetTextColor( "#ffffffff" );
+    txtTEST.SetTextSize( 14 );
+    txtTEST.SetMargins( 0.5, 0.5 );
+    layHome.AddChild( txtTEST );
+    */
+}
+//----------------------------------------------------
+
+//Set up the Home screen
+function AddMainLayout()
+{
+    //Create Home Layout, this is the base layer for all others
+    layHome = app.CreateLayout( "Frame", "FillXY" );
+    
+    //Create a layout with objects vertically centered.
+    lay = app.CreateLayout( "Linear", "Vcentre,FillXY" );
+    //Background of Home screen is set by function CheckBT
+        
+    lay.SetPadding( 0, 0.01, 0, 0 );
+    
+    //Insert Fords Logo at the top of the App
+    imgFords = app.CreateImage( "Img/FordsLogo.png", 0.6, -1);
+    //imgFords.SetPadding( 0.2,0.01,0.2,0 );
+    lay.AddChild( imgFords );
+    
+    //Tool Unit Serial Number
+    txtQR = app.CreateText(" Tool Unit ", 0.8, 0.1, "Multiline" );
+    txtQR.SetTextSize( 14 );
+    txtQR.SetTextColor( white );
+    lay.AddChild( txtQR );    
+    
+    //Horizontal Buttons (1st Row)
+    layHoriz1 = app.CreateLayout( "Linear", "Horizontal" );
+    lay.AddChild( layHoriz1 );
+    
+    //Create a button 1/3 of screen width and 1/4 screen height.
+    btn = app.CreateToggle( "Connect Bluetooth", 0.4, 0.15 );
+    btn.SetOnTouch( ShowState );    
+    layHoriz1.AddChild( btn );
+    
+    btnScan = app.CreateButton( "Scan QR Code", 0.4, 0.15 );
+    btnScan.SetOnTouch( btnScan_OnTouch );    
+    layHoriz1.AddChild( btnScan );
+    
+    //Horitontal Buttons (2nd row)
+    layHoriz2 = app.CreateLayout( "Linear", "Horizontal" );
+    lay.AddChild( layHoriz2 );
+
+    //Read Button
+    btnR = app.CreateButton( "Read Count Value", 0.4, 0.15 );
+    btnR.SetOnTouch( btnR_OnTouch );
+    layHoriz2.AddChild( btnR );
+  
+    //Mail Button  
+    btnMail = app.CreateButton( "Mail Count Value", 0.4, 0.15 );
+    btnMail.SetOnTouch( btnMail_OnTouch );
+    layHoriz2.AddChild( btnMail );
+        
+    txtBT = app.CreateText(" Count Value = Not Connected ", 0.8, 0.05 );
+    txtBT.SetTextColor( "#ffffffff" );
+    txtBT.SetTextSize( 14 );
+    lay.AddChild( txtBT );
+}
+//----------------------------------------------------
+
+//Exit app pop up on press of "back button" on phone
+function OnBack() 
+{
+    //Ask user via a popup if they really want to exit
+  var yesNo = app.CreateYesNoDialog( "Do you really want to Exit?" );
+  yesNo.SetOnTouch( yesNo_OnTouch );
+}
+function yesNo_OnTouch( result )
+{
+  if( result=="Yes" ) app.Exit();
+}
+//----------------------------------------------------
+
+//Menu Icon
+function AddMenuIcon()
+{
+    //Create a layer (left justified) for menu icon
+    menuIcon = app.CreateImage( "Img/menuicon.png", 0.2, -1);
+    menuIcon.SetOnTouch( menu_OnTouch );
+    layHome.AddChild( menuIcon );
+    
+}
+//----------------------------------------------------
+
+//Called when user touches the 'MenuIcon' button.
+function menu_OnTouch( ev )
+{
+    if( (ev.action=="Down")&(g_menuOpen == false) )
+    {
+	    laySlide.Animate( "SlideFromLeft" );
+	    menuIcon.Scale(1.25,1.25);
+	    g_menuOpen = true;   	    
+    }
+    else if( (ev.action=="Up")&(g_menuOpen == true) )
+    {
+        menuIcon.Scale(1,1);
+    }
+    else if( (ev.action=="Down")&(g_menuOpen == true) )
+    {
+        laySlide.Animate( "SlideToLeft" );
+        menuIcon.Scale(1.25,1.25);
+        g_menuOpen = false;	    
+    }
+    else if( (ev.action=="Up")&(g_menuOpen == false) )
+    {
+        menuIcon.Scale(1,1);
+    }
+}
+//----------------------------------------------------
+
+//Layout for the menu drawer
+function AddMenuLayout()
+{
+    //Create a layout we can slide over the main layout.
+	//(This hidden layout is actually on top of the main
+	//layout, it just appears to slide from the left)
+	laySlide = app.CreateLayout( "Linear", "FillXY" );
+	laySlide.SetPadding( 0, 0.1, 0, 0 );
+    //laySlide.SetBackGradientRadial( 0.5, 0.5, 1, amber, blue );
+    laySlide.SetBackGradient( amber,grey );
+	laySlide.SetVisibility( "Hide" );
+
+}
+//----------------------------------------------------
+
+//Bluetooth Connection and button
+function ShowState( isChecked )
+{
+    //if the BT connect toggle is pressed..
+    if( isChecked )
+    {
+        //pull up a list of bt devices
+        btList = app.CreateBluetoothList( "" );
+        btList.SetOnTouch( btList_OnTouch );
+    }
+    
+    else
+        {
+            btn.SetText( "Connect Bluetooth" );
+            txtBT.SetText( "Count Value = Not Connected" );
+            bt.Disconnect( "" );
+            app.ShowPopup( "Bluetooth disconnected", "Bottom,Short" );
+            lay.SetBackGradient( green,grey );
+        }    
+}
+
+//Called when user selects a device from the list of BT devices
+//Note: the device must be paired in settings first
+function btList_OnTouch ( name, address )
+{
+    //alert( name );
+    bt.Connect( name );
+    bt.SetOnReceive( bt_OnReceive );
+    app.ShowProgress( "Connecting..." );
+}
+//----------------------------------------------------
+
+//Check Bluetooth is Enabled in Settings
+function CheckBT()
+{
+    if (btOn == false)
+    {
+    app.Alert( "Please turn Bluetooth on in Settings" );
+    lay.SetBackGradient( green,grey );
+    app.Vibrate( "0,500" );
+    //CheckBTagain();
+    }
+    else if (btOn == true)
+    {
+    lay.SetBackGradient( green,grey );
+    }
+}
+//----------------------------------------------------
+
+//Called when we are connected.
+function bt_OnConnect( ok )
+{
+    if( ok ) 
+    { 
+        app.ShowPopup( "Connected!", "Bottom,Short" );
+        setTimeout( "app.HideProgress()", 50 );
+        lay.SetBackGradient( blue,grey );
+        btn.SetText( "BT Connected" );
+        bt.Write( "1" );
+    }
+    else 
+    {
+        app.ShowPopup( "Bluetooth connection falied", "Bottom" );
+        setTimeout( "app.HideProgress()", 50 );
+        btn.SetText( "Connect Bluetooth" );
+        btn.SetChecked( checked = false );
+        lay.SetBackGradient( red,grey );
+    }
+}
+//----------------------------------------------------
+
+//Called when user touches the button.
+function btnR_OnTouch( count ) 
+{
+    bt.Write( "2" );
+}
+
+//Called when we get data from device.
+function bt_OnReceive( data )
+{
+   g_countValue = data;
+   txtBT.SetText( "Count Value = " + g_countValue + "" );
+}
+
+function btnMail_OnTouch ( data )
+{
+    app.SendMail( "dan.evans@fords-packsys.co.uk", "Test", "Hello,\n\n" + "The count value for: " + g_qrOutput + " is " + g_countValue + "." );
+}
+//----------------------------------------------------
+
+//Called when "Scan QR Code" buton is pressed
+function btnScan_OnTouch()
+{
+  //Fix orientation to landscape.
+  app.SetOrientation( "Portrait" );
+  
+  //Stop screen turning off.
+  app.PreventScreenLock( true );
+
+  //Create a layout to fill the screen.
+  layQR = app.CreateLayout( "Absolute", "FillXY" );
+
+  //Create the barcode reader. 
+  reader = app.CreateObject( "BarcodeReader" );
+
+  //Create camera view control
+  //(UseYUV is required for use with BarcodeReader)
+  cam = app.CreateCameraView( 1.25, 1.0, "VGA, UseYUV" );
+  cam.SetPosition( 0, 0 );
+  cam.SetOnReady( cam_OnReady );
+  layQR.AddChild( cam );
+
+  //Add main layout to app.
+  app.AddLayout( layQR ); 
+  
+  g_qrQuit = false;
+}
+//----------------------------------------------------
+
+//Exit QR scanner
+function exitQR ()
+{
+    g_qrQuit = true;
+    
+    //Remove QR Scanner layout (returns to home screen)
+    app.DestroyLayout( layQR );
+    
+    //Stop Camera Decoding
+    g_qrOff == null;
+    
+    //Set app orientation
+    app.SetOrientation("portrait");
+
+}
+//----------------------------------------------------
+
+//Called when camera is ready.
+function cam_OnReady()
+{
+  //Create an image control over the top of the 
+  //camera view with transparency (alpha) so
+  //we can show a framed area.
+  img = app.CreateImage( null, 1.0, 1.0 ); 
+  img.SetAlpha( 0.5 ); 
+  img.SetPaintColor( "#ff0000" );
+  img.SetPaintStyle( "Line" );
+  img.SetLineWidth( 10 );
+  img.DrawRectangle( 0.062, 0.168, 0.938, 0.842 );
+  layQR.AddChild( img ); 
+  
+  //Create Top Border
+  imgTop = app.CreateImage( null, 1.0, 1.0 ); 
+  imgTop.SetAlpha( 0.5 );
+  imgTop.SetPaintColor( "#000000" );
+  imgTop.SetPaintStyle( "Fill" );
+  imgTop.SetLineWidth( 10 );
+  imgTop.DrawRectangle( 0.05, 0, 0.95, 0.16 );
+  layQR.AddChild( imgTop );
+  
+  //Create Left Border
+  imgLeft = app.CreateImage( null, 1.0, 1.0 ); 
+  imgLeft.SetAlpha( 0.5 );
+  imgLeft.SetPaintColor( "#000000" );
+  imgLeft.SetPaintStyle( "Fill" );
+  imgLeft.SetLineWidth( 10 );
+  imgLeft.DrawRectangle( 0, 0, 0.05, 1 );
+  layQR.AddChild( imgLeft );
+  
+  //Create Right Border
+  imgRight = app.CreateImage( null, 1.0, 1.0 ); 
+  imgRight.SetAlpha( 0.5 );
+  imgRight.SetPaintColor( "#000000" );
+  imgRight.SetPaintStyle( "Fill" );
+  imgRight.SetLineWidth( 10 );
+  imgRight.DrawRectangle( 0.95, 0, 1, 1 );
+  layQR.AddChild( imgRight );
+  
+  //Create Bottom Border
+  imgBottom = app.CreateImage( null, 1.0, 1.0 ); 
+  imgBottom.SetAlpha( 0.5 );
+  imgBottom.SetPaintColor( "#000000" );
+  imgBottom.SetPaintStyle( "Fill" );
+  imgBottom.SetLineWidth( 10 );
+  imgBottom.DrawRectangle( 0.05, 0.85, 0.95, 1 );
+  layQR.AddChild( imgBottom );
+
+  //Create a layout for instruction text
+  //and flash checkbox.
+  overlay = app.CreateLayout( "Linear", "FillXY" );
+  layQR.AddChild(overlay);
+
+  //Create the instruction text.
+  txt = app.CreateText( "Position the QR in the frame to read it" );
+  txt.SetMargins( 0,0.05,0,0 );
+  txt.SetPadding( 0.01,0,0.01,0.005 );
+  txt.SetTextColor( "#ffffff" );
+  //txt.SetBackColor( "#88262626" );
+  txt.SetTextSize( 18 );
+  overlay.AddChild( txt );
+    
+  //Create 'Use Flash' check box.
+  chkFlash = app.CreateCheckBox( "Use Flash" );
+  chkFlash.SetMargins( 0,0,0,0 );
+  chkFlash.SetPadding( 0,0,0.02,0 );
+  chkFlash.SetTextColor( "#ffffff" );
+  //chkFlash.SetBackColor( "#88262626" );
+  chkFlash.SetTextSize( 18 );
+  chkFlash.SetOnTouch( chkFlash_OnTouch );
+  overlay.AddChild( chkFlash );
+
+    //Create back button
+    btnBack = app.CreateButton( "Back" );
+    btnBack.SetMargins( 0,0.75,0,0 );
+    //btnBack.SetPadding( 0.01,0,0.01,0 );
+    btnBack.SetTextColor( "#ffffff" );
+    btnBack.SetTextSize( 18 );
+    btnBack.SetOnTouch( exitQR );
+    overlay.AddChild( btnBack );  
+    
+
+  //Start preview.
+  cam.StartPreview();
+
+  //Macro focus mode works best for 
+  //reading barcodes.
+  cam.SetFocusMode( "macro" );
+
+  //Start decoding the camera preview.
+  DecodeFromCamera();
+}
+//----------------------------------------------------
+
+//Handle Use Flash checkbox touch
+function chkFlash_OnTouch( value )
+{
+cam.SetFlash( value );
+}
+
+function DecodeFromCamera()
+{
+    if (g_qrQuit) return;
+    
+  //Attempt to detect a barcode in the 
+  //camera preview.
+  var result = reader.Decode( cam );
+
+  //If result is not null, a barcode 
+  //was detected.
+  if(( result != null )&( g_qrOff != null ))
+  {
+    //Vibrate and show result dialog.
+    app.Vibrate( "0,400,0" );
+    ShowResult( result );
+  }
+  else
+  {
+    //Decode again in 200 milliseconds.
+    setTimeout( DecodeFromCamera, 200 );
+  }
+}
+//----------------------------------------------------
+
+//Decode and then display the results from the QR scan
+function ShowResult( result )
+{
+    //Turn flash OFF when popup
+    cam.SetFlash( null );
+    chkFlash.SetChecked( checked = false );
+    
+  //Create dialog window.
+  resultDlg = app.CreateDialog( result.barcodeType, "NoCancel" );
+
+  //Create a layout for dialog.
+  layDlg = app.CreateLayout( "Linear", "Vertical, FillXY" );
+  layDlg.SetPadding( 0.02, 0, 0.02, 0.02 );
+  resultDlg.AddLayout( layDlg );
+
+  //Create text for the content type name.
+  txtDlg = app.CreateText( result.contentType );
+  txtDlg.SetTextSize( 22 );
+  txtDlg.SetTextColor( "#0099CC" );
+  layDlg.AddChild( txtDlg );
+
+  //Create a scroller for the content.
+  scrDlg = app.CreateScroller( 0.8, 0.45 );
+  scrDlg.SetMargins( 0, 0.01, 0, 0 );
+  layDlg.AddChild( scrDlg );
+
+  //Create text for the content.
+    txtDlg = app.CreateText( result.content, 0.8, -1, "Multiline" );
+    txtDlg.SetTextSize( 18 );
+    scrDlg.AddChild( txtDlg );
+    g_qrOutput = result.content;
+    txtQR.SetText( g_qrOutput );
+
+    //Create Horizontal layout
+    layDlgHoriz = app.CreateLayout( "Linear", "Horizontal" );
+    layDlg.AddChild( layDlgHoriz );
+    //layDlgHoriz.SetMargins( 0, 0.2, 0, 0 );
+    //Create a 'Read Again' button to dismiss the dialog, and return to scanner
+    btnDlg = app.CreateButton( "Read Again" );
+    btnDlg.SetOnTouch( resultDlg_OnOk );
+    layDlgHoriz.AddChild( btnDlg );
+    //Create 'Connect' button
+    btnDlgConnect = app.CreateButton( "Load" );
+    btnDlgConnect.SetOnTouch( resultDlg_Load );
+    layDlgHoriz.AddChild( btnDlgConnect );
+    
+  //Show dialog.
+  resultDlg.Show();
+}
+//----------------------------------------------------
+
+//Called when the result dialog 'Load' button is pressed
+function resultDlg_Load()
+{
+    //var QRident = txtDlg;
+    resultDlg.Dismiss();
+    exitQR();       
+}
+//----------------------------------------------------
+
+//Called when the result dialog 'Read Again' button is pressed 
+function resultDlg_OnOk()
+{
+  resultDlg.Dismiss();
+  
+  //Start decoding again.
+  DecodeFromCamera();
+}
+//----------------------------------------------------
