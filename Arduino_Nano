@@ -1,20 +1,3 @@
-/*
-Name:		ToolUnitCounter.ino
-Author:		DanE
-Created:	02-09-15	8:20:00 AM
-Rev1:		02-09-15	Count button presses and display in serial monitor
-Rev2:		02-09-15	Ensure state change before increment
-Rev3:		02-09-15	Write to EEPROM with preset value and start counting from that point
-Rev4:		02-09-15	Add debounce to stop extra increments
-Rev5:		03-09-15	Add button to update EEPROM with count data
-Rev6:		03-09-15	Update EEPROM address allocation to be 4bytes/32bit (from 1byte/8bit)
-Rev7:		03-09-15	Replace pushbutton with inductive sensor
-Rev8:		04-09-15	Add Bluetooth (on combination with MIT AI2)
-Rev9:		07-09-15	Read count value on app over bluetooth
-Rev10:		22-09-15	Convert Serial.read() to Serial.readInt() so ASCII data cn be received over bluetooth
-Rev11		23-09-15	Add commas to make count o/p more readable
-
-*/
 
 //Libraries
 #include <EEPROM.h>
@@ -104,20 +87,13 @@ void setup() {
 
 }
 
-void loop() {
+void loop() 
 
-	splitCountValue();
-
+{
 	
 	//Serial print the latest countValue to serial as a heartbeat message
 	if ((millis() - lastSerialPrint) > serialPrintHeartbeat)
 	{
-		lastSerialPrint = millis();
-		//Serial.println(countNumber);
-		printCountValue();
-	}
-	/*
-
 	//Bluetooth Interface
 		//Checkto see if Serial is available
 	if (Serial.available() > 0)
@@ -188,7 +164,7 @@ void loop() {
 	//EEPROM update logic
 	long address = 0;		//Sets the EEPROM start address, must be in main loop
 
-	/*
+
 	if (countNumber >= (storedValue + (maxCycles * EEPROMscaler))) {
 
 		digitalWrite(ledPin, HIGH);		//Turn onboard LED ON
@@ -232,7 +208,7 @@ void loop() {
 	}
 	storeStatePrv = storeState;
 }
-*/
+
 }
 
 void splitCountValue()
