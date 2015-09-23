@@ -1,0 +1,332 @@
+/*
+Name:		ToolUnitCounter.ino
+Author:		DanE
+Created:	02-09-15	8:20:00 AM
+Rev1:		02-09-15	Count button presses and display in serial monitor
+Rev2:		02-09-15	Ensure state change before increment
+Rev3:		02-09-15	Write to EEPROM with preset value and start counting from that point
+Rev4:		02-09-15	Add debounce to stop extra increments
+Rev5:		03-09-15	Add button to update EEPROM with count data
+Rev6:		03-09-15	Update EEPROM address allocation to be 4bytes/32bit (from 1byte/8bit)
+Rev7:		03-09-15	Replace pushbutton with inductive sensor
+Rev8:		04-09-15	Add Bluetooth (on combination with MIT AI2)
+Rev9:		07-09-15	Read count value on app over bluetooth
+Rev10:		22-09-15	Convert Serial.read() to Serial.readInt() so ASCII data cn be received over bluetooth
+Rev11		23-09-15	Add commas to make count o/p more readable
+
+*/
+
+//Libraries
+#include <EEPROM.h>
+
+//Application parameters
+const int maxCycles = 50;	//number of millions of warranty cyles (this sets count resolution)
+const int EEPROMscaler = 1;	//Write to EEPROM must be controlled as EEPRROM has 100,000 writes limit
+
+							//Pin Mapping
+const int counterPin = 3;	//Input from counter (looking for HIGH as external pulldown resistor is used)
+const int storePin = 6;		//Input for push button to store count data to EEPROM
+const int ledPin = 13;
+
+//Variables
+int	counterState = 0;		//current count button state
+int counterStatePrv = 0;    //previous count button state
+int storeState = 0;			//current store button state
+int storeStatePrv = 0;		//previous store button state
+int presetCount = 100;
+long storedValue;			//Count data in EEPROM
+
+							//Bluetooth Interface
+int serialIP = 0;				//variable to store the information sent IN from bluetooth
+int serialOP = 0;				//variable to store the information sent OUT over serial
+
+unsigned long lastDebounceTime;				//Last time output was toggled - Count
+unsigned long lastDebounceStore;			//Last time output was toggled - Store
+unsigned long debounceDelay = 10;			//Debounce time on the input button
+unsigned long lastSerialPrint = 1000;		//Time of last serial print
+unsigned long serialPrintHeartbeat = 1000;	//Heatbeat rate for Serial Print of CountValue
+
+//CountNumber holding variables
+unsigned long countNumber;      //unsigned 32bit variable
+int countHun = 0;
+int countTho = 0;
+int countMil = 0;
+
+
+								//This function will write a 4 byte (32bit) long to the eeprom at
+								//the specified address to adress + 3.
+void EEPROMWriteLong(int address, long value)
+{
+	//Decomposition from a long to 4 bytes by using bitshift.
+	//One = Most significant -> Four = Least significant byte
+	byte four = (value & 0xFF);
+	byte three = ((value >> 8) & 0xFF);
+	byte two = ((value >> 16) & 0xFF);
+	byte one = ((value >> 24) & 0xFF);
+
+	//Write the 4 bytes into the eeprom memory.
+	EEPROM.write(address, four);
+	EEPROM.write(address + 1, three);
+	EEPROM.write(address + 2, two);
+	EEPROM.write(address + 3, one);
+}
+
+//This function will return a 4 byte (32bit) long from the eeprom
+//at the specified address to adress + 3.
+long EEPROMReadLong(long address)
+{
+	//Read the 4 bytes from the eeprom memory.
+	long four = EEPROM.read(address);
+	long three = EEPROM.read(address + 1);
+	long two = EEPROM.read(address + 2);
+	long one = EEPROM.read(address + 3);
+
+	//Return the recomposed long by using bitshift.
+	return ((four << 0) & 0xFF) + ((three << 8) & 0xFFFF) + ((two << 16) & 0xFFFFFF) + ((one << 24) & 0xFFFFFFFF);
+}
+
+
+void setup() {
+
+	//Sets INPUT pins
+	pinMode(counterState, INPUT);
+	pinMode(storeState, INPUT);
+
+	//Sets OUTPUT pins
+	pinMode(ledPin, OUTPUT);
+
+	//Start Serial comms and allow a short delay for initialisation
+	Serial.begin(9600);
+	delay(50);
+
+	//Read the stroed EEPROM value
+	countNumber = EEPROMReadLong(0);			
+
+}
+
+void loop() {
+
+	splitCountValue();
+
+	
+	//Serial print the latest countValue to serial as a heartbeat message
+	if ((millis() - lastSerialPrint) > serialPrintHeartbeat)
+	{
+		lastSerialPrint = millis();
+		//Serial.println(countNumber);
+		printCountValue();
+	}
+	/*
+
+	//Bluetooth Interface
+		//Checkto see if Serial is available
+	if (Serial.available() > 0)
+	{
+		//serialIP = Serial.read();
+		//set serialIP to read the serial input and convert it to an integer ( this means the only messages that can be received are 0 to 254 inclusive)
+		serialIP = Serial.parseInt();
+
+		//Serial.println(serialIP);
+
+//Deals with messages received over bluetooth (serial)
+
+		if ((serialIP == 1) && (serialOP != 1))
+		{
+			Serial.println("Waiting");
+			serialOP = 1;
+		}
+
+		if ((serialIP == 2) && (serialOP != 2))
+		{
+			//Serial.println("Data Sent");
+			Serial.println(countNumber);
+			serialOP = 2;
+		}
+
+		if ((serialIP == 3) && (serialOP != 3))
+		{
+			Serial.println("Data Requested");
+			Serial.println(storedValue);
+			serialOP = 3;
+		}
+		serialOP = 0;		//reset serial connection, ready for next message
+	}
+
+	//Counter logic
+	counterState = digitalRead(counterPin);		//Read the status of the counter input
+	storeState = digitalRead(storePin);			//Read the status of the store input
+	storedValue = EEPROMReadLong(0);			//Read the stored EEPROM value
+
+	if (counterState != counterStatePrv) {		// If the switch changed, due to noise or pressing
+
+		if ((millis() - lastDebounceTime) > debounceDelay) {
+
+			lastDebounceTime = millis();		//set debounce time to be the clock time
+
+			if (counterState == HIGH) {         //check for pulse
+
+				digitalWrite(ledPin, HIGH);		//Turn onboard LED ON
+
+				//countNumber = countNumber + 100000;			//increment (add 1) to the stored count value
+
+				//Serial.println(countNumber);
+
+				//Call a void loop responsible for memory allocation of o/p
+				splitCountValue();
+
+				//Call a void loop responsible for printing the o/p
+				printCountValue();
+
+			}
+		}
+		else { digitalWrite(ledPin, LOW); }
+	}
+
+	counterStatePrv = counterState;
+
+
+	//EEPROM update logic
+	long address = 0;		//Sets the EEPROM start address, must be in main loop
+
+	/*
+	if (countNumber >= (storedValue + (maxCycles * EEPROMscaler))) {
+
+		digitalWrite(ledPin, HIGH);		//Turn onboard LED ON
+
+		EEPROMWriteLong(address, countNumber);
+		address += 4;
+
+		Serial.println("Stored Value updated");
+		Serial.print("Resolution: ");
+		Serial.print(maxCycles * EEPROMscaler);
+		Serial.println(" cycles");
+
+	}
+
+	else { digitalWrite(ledPin, LOW); }
+
+	if (storeState != storeStatePrv) {		// If the switch changed, due to noise or pressing
+
+		if ((millis() - lastDebounceStore) > debounceDelay) {
+
+			lastDebounceStore = millis();
+
+			if (storeState == HIGH) {           //check for pulse
+
+				digitalWrite(ledPin, HIGH);		//Turn onboard LED ON
+
+				EEPROMWriteLong(address, countNumber);
+				address += 4;
+
+				Serial.println("Stored Value updated");
+				Serial.print("Resolution: ");
+				Serial.print(maxCycles * EEPROMscaler);
+				Serial.println(" cycles");
+				Serial.println();
+				Serial.println();
+
+			}
+			else { digitalWrite(ledPin, LOW); }
+		}
+
+	}
+	storeStatePrv = storeState;
+}
+*/
+}
+
+void splitCountValue()
+{
+	if (countHun < 999)
+	{
+		countHun++;
+	}
+	else if ((countHun == 999) && (countTho < 999))
+	{
+		countHun = 0;
+		countTho++;
+	}
+	else if ((countTho == 999) && (countMil < 999))
+	{
+		countHun = 0;
+		countTho = 0;
+		countMil++;
+	}
+}
+
+void printCountValue() 
+{
+	//print countHun value
+	if ((countTho == 0) && (countMil == 0))
+	{
+		//countHun no comma scaling needed
+		Serial.println(countHun);
+	}
+
+	//print countTho and countHun values
+	else if ((countTho > 0) && (countMil == 0))
+	{
+		//countTho no comma scaling needed
+		Serial.print(countTho);
+		Serial.print(",");
+		
+		//countHun with comma scaling
+		if (countHun < 10)
+		{
+			Serial.print("00");
+			Serial.println(countHun);
+		}
+		else if ((countHun >= 10) && (countHun < 100))
+		{
+			Serial.print("0");
+			Serial.println(countHun);
+		}
+		else if ((countHun >= 100) && (countHun < 1000))
+		{
+			Serial.println(countHun);
+		}
+	}
+
+	//print countMil and countTho and countHun values
+	else if  (countMil > 0)
+	{
+		//countMil no comma scaling needed
+		Serial.print(countMil);
+		Serial.print(",");
+		
+		//countTho with comma scaling
+		if (countTho < 10)
+		{
+			Serial.print("00");
+			Serial.print(countTho);
+		}
+		else if ((countTho >= 10) && (countTho < 100))
+		{
+			Serial.print("0");
+			Serial.print(countTho);
+		}
+		else if ((countTho >= 100) && (countTho < 1000))
+		{
+			Serial.print(countTho);
+		}
+
+		Serial.print(",");
+
+		//countHun with comma scaling
+		if (countHun < 10)
+		{
+			Serial.print("00");
+			Serial.println(countHun);
+		}
+		else if ((countHun >= 10) && (countHun < 100))
+		{
+			Serial.print("0");
+			Serial.println(countHun);
+		}
+		else if ((countHun >= 100) && (countHun < 1000))
+		{
+			Serial.println(countHun);
+		}
+	}
+
+}
