@@ -1,20 +1,3 @@
-/*
-
-This is the "DroidScript" code for the PhoneApp section of the Tool Unit Counter
-
-Name:        DanE
-Created:    10-09-15
-Rev1:       Initial App, BT connectivity and can read count
-Rev2:       More Robust BT interface, Serial data sent 1 message at a time
-Rev3:       Added Mail functionality
-Rev4:       Add QR scanner
-Rev5:       Add Menu Icon and slide draw
-Rev6:       Make mail functionality robust, includes machine serial from QR and count variable
-Rev7:       Set scale change on menu icon
-Rev8:       var CountValue now a global variable
-Rev9:       Updates from working with Dave...
-
-*/
 
 //Plugins
 app.LoadPlugin( "BarcodeReader" );
@@ -26,6 +9,7 @@ var g_qrOutput = "Not Connected";
 var g_menuOpen = false;
 var g_countValue;
 var g_qrQuit;
+var g_otgDataIn;
 
 //Global Commands
 btOn = app.IsBluetoothEnabled();
@@ -66,7 +50,7 @@ function OnStart()
     CheckBT();
     
     //Create Bluetooth serial object.
-    bt = app.CreateBluetoothSerial( );
+    bt = app.CreateBluetoothSerial( 9600 );
     bt.SetOnConnect( bt_OnConnect )
     bt.SetSplitMode( "End", "\n" );
     
@@ -131,10 +115,10 @@ function AddMainLayout()
     layHoriz2 = app.CreateLayout( "Linear", "Horizontal" );
     lay.AddChild( layHoriz2 );
 
-    //Read Button
-    btnR = app.CreateButton( "Read Count Value", 0.4, 0.15 );
-    btnR.SetOnTouch( btnR_OnTouch );
-    layHoriz2.AddChild( btnR );
+    //OTG Button
+    btnOTG = app.CreateButton( "OTG Connection", 0.4, 0.15 );
+    btnOTG.SetOnTouch( btnOTG_OnTouch );
+    layHoriz2.AddChild( btnOTG );
   
     //Mail Button  
     btnMail = app.CreateButton( "Mail Count Value", 0.4, 0.15 );
@@ -262,7 +246,7 @@ function CheckBT()
 }
 //----------------------------------------------------
 
-//Called when we are connected.
+//Called when Bluetooth is connected.
 function bt_OnConnect( ok )
 {
     if( ok ) 
@@ -284,22 +268,43 @@ function bt_OnConnect( ok )
 }
 //----------------------------------------------------
 
-//Called when user touches the button.
-function btnR_OnTouch( count ) 
-{
-    bt.Write( "2" );
-}
-
-//Called when we get data from device.
+//Called when we get data from Bluetooth device.
 function bt_OnReceive( data )
 {
    g_countValue = data;
+   console.log( "**************" + data);
    txtBT.SetText( "Count Value = " + g_countValue + "" );
 }
 
 function btnMail_OnTouch ( data )
 {
     app.SendMail( "dan.evans@fords-packsys.co.uk", "Test", "Hello,\n\n" + "The count value for: " + g_qrOutput + " is " + g_countValue + "." );
+}
+//----------------------------------------------------
+
+//Called when user touches the 'OTG Connection' button.
+function btnOTG_OnTouch( count ) 
+{
+    //bt.Write( "2" );
+    usb = app.CreateUSBSerial( 115200, 32, 1, 0 );
+	
+	if( !usb ) 
+    {
+        app.ShowPopup( "Please connect your Arduino and restart", "Bottom" );
+        return;
+    }
+    usb.SetOnReceive( usb_OnReceive );
+    app.ShowPopup( "Connected", "Bottom,Short" );
+    
+}
+
+//Called when Serial data is received from OTG connection
+function usb_OnReceive( usbData )
+{
+    console.log( usbData );
+    g_otgDataIn = usbData;
+    txtBT.SetText( "Count Value = " + g_otgDataIn + "" );
+    
 }
 //----------------------------------------------------
 
